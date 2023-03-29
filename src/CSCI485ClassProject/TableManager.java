@@ -1,7 +1,7 @@
 package CSCI485ClassProject;
 
 import java.util.HashMap;
-import CSCI485ClassProject.StatusCode;
+
 import CSCI485ClassProject.models.AttributeType;
 import CSCI485ClassProject.models.TableMetadata;
 
