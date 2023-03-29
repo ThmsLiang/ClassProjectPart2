@@ -28,6 +28,7 @@ public class Cursor {
     private final ComparisonOperator operator;
     private KeyValue currentKV;
     private List<FDBKVPair> currentRow;
+    private List<KeyValue> currentKVList;
 
     private boolean isUsingIndex;
 
@@ -78,7 +79,10 @@ public class Cursor {
         }
         currentKV = iterator.next();
 
-        currentRow = toFDBKVPair(getNextKV(new ArrayList<>()));
+        currentKVList = new ArrayList<>();
+        moveToNextKV();
+        currentRow = toFDBKVPair(currentKVList);
+        currentKVList.clear();
         return currentRow;
     }
 
@@ -92,7 +96,10 @@ public class Cursor {
         }
         currentKV = iterator.next();
 
-        currentRow = toFDBKVPair(getNextKV(new ArrayList<>()));
+        currentKVList = new ArrayList<>();
+        moveToNextKV();
+        currentRow = toFDBKVPair(currentKVList);
+        currentKVList.clear();
         return currentRow;
     }
 
@@ -103,7 +110,10 @@ public class Cursor {
             currentRow = null;
             return null;
         } else {
-            currentRow = toFDBKVPair(getNextKV(new ArrayList<>()));
+            currentKVList = new ArrayList<>();
+            moveToNextKV();
+            currentRow = toFDBKVPair(currentKVList);
+            currentKVList.clear();
             return currentRow;
         }
     }
@@ -115,7 +125,10 @@ public class Cursor {
             currentRow = null;
             return null;
         } else {
-            currentRow = toFDBKVPair(getNextKV(new ArrayList<>()));
+            currentKVList = new ArrayList<>();
+            moveToNextKV();
+            currentRow = toFDBKVPair(currentKVList);
+            currentKVList.clear();
             return currentRow;
         }
     }
@@ -195,26 +208,29 @@ public class Cursor {
         return pk;
     }
 
-    private List<KeyValue> getNextKV(List<KeyValue> keyvalueList) {
-        keyvalueList.add(currentKV);
+    private void moveToNextKV() {
+        currentKVList.add(currentKV);
         Tuple currPK = getPKFromKeyValue(currentKV);
-        boolean isNextPK = false;
+        //x`boolean isNextPK = false;
         KeyValue kv = null;
         Object target;
 
-        if (!iterator.hasNext()) return new ArrayList<>();
-        while (iterator.hasNext() && !isNextPK) {
+        if (!iterator.hasNext()) {
+            currentKVList = new ArrayList<>();
+            return;
+        }
+        while (iterator.hasNext()) {
             currentKV = iterator.next();
             if (getPKFromKeyValue(currentKV).equals(currPK)) {
-                keyvalueList.add(currentKV);
-            } else isNextPK = true;
+                currentKVList.add(currentKV);
+            } else break;
         }
 
         if(operator == null){
-            return keyvalueList;
+            return;
         }
 
-        for(KeyValue keyValue: keyvalueList){
+        for(KeyValue keyValue: currentKVList){
             Tuple attributeToCompare = Tuple.fromBytes(keyValue.getKey());
             if(attributeToCompare.getString(metadata.getPrimaryKeys().size()+1).equals(attributeKey)) {
                 kv = keyValue;
@@ -223,18 +239,19 @@ public class Cursor {
         }
 
         if(metadata.getPrimaryKeys().contains(attributeKey)){
-            kv = keyvalueList.get(0);
+            kv = currentKVList.get(0);
             target = Tuple.fromBytes(kv.getKey()).get(1);
         } else if(kv != null){
             target = Tuple.fromBytes(kv.getValue()).get(0);
         } else {
-            return getNextKV(new ArrayList<>());
+            currentKVList = new ArrayList<>();
+            moveToNextKV();
+            return;
         }
 
-        if (compare(target)) {
-            return keyvalueList;
-        } else {
-            return getNextKV(new ArrayList<>());
+        if (!compare(target)) {
+            currentKVList = new ArrayList<>();
+            moveToNextKV();
         }
     }
 
