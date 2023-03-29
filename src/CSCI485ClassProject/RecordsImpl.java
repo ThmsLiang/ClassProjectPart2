@@ -26,12 +26,12 @@ public class RecordsImpl implements Records {
             return StatusCode.TABLE_NOT_FOUND;
         }
 
-        if (!checkKVValid(primaryKeys, primaryKeysValues)) {
+        if (checkKVInvalid(primaryKeys, primaryKeysValues)) {
             FDBHelper.abortTransaction(tx);
             return StatusCode.DATA_RECORD_PRIMARY_KEYS_UNMATCHED;
         }
 
-        if (!checkKVValid(attrNames, attrValues)) {
+        if (checkKVInvalid(attrNames, attrValues)) {
             FDBHelper.abortTransaction(tx);
             return StatusCode.DATA_RECORD_CREATION_ATTRIBUTES_INVALID;
         }
@@ -169,8 +169,8 @@ public class RecordsImpl implements Records {
         return null;
     }
 
-    private boolean checkKVValid(Object[] keys, Object[] values) {
-        return (keys != null && keys.length != 0 && values != null && values.length != 0 && keys.length == values.length);
+    private boolean checkKVInvalid(Object[] keys, Object[] values) {
+        return (keys == null || keys.length == 0 || values == null || values.length == 0 || keys.length != values.length);
     }
 
     private AttributeType getAttributeType(Object attribute) {

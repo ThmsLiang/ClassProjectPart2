@@ -14,13 +14,13 @@ public class Cursor {
         READ,
         READ_WRITE
     }
-
+    private final Transaction tx;
     private Mode mode;
     private final String tableName;
     private final DirectorySubspace subspace;
     private final TableMetadata metadata;
     private final List<String> path;
-    private final Transaction tx;
+
     private AsyncIterator<KeyValue> iterator;
     private Boolean isGetFirst = null;
     private String attributeKey;
@@ -78,8 +78,7 @@ public class Cursor {
         }
         currentKV = iterator.next();
 
-        List<KeyValue> keyvalueList = new ArrayList<>();
-        currentRow = toFDBKVPair(getNextKV(keyvalueList));
+        currentRow = toFDBKVPair(getNextKV(new ArrayList<>()));
         return currentRow;
     }
 
@@ -93,9 +92,7 @@ public class Cursor {
         }
         currentKV = iterator.next();
 
-        List<KeyValue> keyvalueList = new ArrayList<>();
-
-        currentRow = toFDBKVPair(getNextKV(keyvalueList));
+        currentRow = toFDBKVPair(getNextKV(new ArrayList<>()));
         return currentRow;
     }
 
@@ -151,31 +148,25 @@ public class Cursor {
             return StatusCode.CURSOR_REACH_TO_EOF;
         }
 
-        List<String> namesOfAtt = new ArrayList<>(Arrays.asList(attributeKeys));
         Set<String> attributes = new HashSet<>(Arrays.asList(attributeKeys));
 
-        for (String pk : metadata.getPrimaryKeys()) {
-            if (attributes.contains(pk)) namesOfAtt.remove(pk);
+        for(String attr: attributes){
+            if(!metadata.getPrimaryKeys().contains(attr) && !metadata.getAttributes().containsKey(attr)){
+                return StatusCode.CURSOR_UPDATE_ATTRIBUTE_NOT_FOUND;
+            }
         }
-        for (String attr : metadata.getAttributes().keySet()) {
-            if (attributes.contains(attr)) namesOfAtt.remove(attr);
-        }
-        if (!namesOfAtt.isEmpty()) return StatusCode.CURSOR_UPDATE_ATTRIBUTE_NOT_FOUND;
-
         for (FDBKVPair kvpair : currentRow) {
             for (int i = 0; i < attributeKeys.length; i++) {
                 if (kvpair.getKey().getString(metadata.getPrimaryKeys().size()).equals(attributeKeys[i])) {
                     Tuple newValue = new Tuple().addObject(attributeVals[i]);
                     FDBHelper.setFDBKVPair(subspace, tx, new FDBKVPair(path, kvpair.getKey(), newValue));
                     FDBHelper.removeKeyValuePair(tx, subspace, kvpair.getKey());
-                    attributes.remove(attributeKeys[i]);
                 }
             }
         }
 
         for (int i = 0; i < attributeKeys.length; i++) {
             if (metadata.getPrimaryKeys().contains(attributeKeys[i])) {
-                attributes.remove(attributeKeys[i]);
                 for (FDBKVPair kvpair : currentRow) {
                     FDBHelper.removeKeyValuePair(tx, subspace, kvpair.getKey());
                     Tuple newKey = new Tuple().addObject(attributeVals[i]).addObject(kvpair.getKey().getString(metadata.getPrimaryKeys().size()));
@@ -207,8 +198,10 @@ public class Cursor {
     private List<KeyValue> getNextKV(List<KeyValue> keyvalueList) {
         keyvalueList.add(currentKV);
         Tuple currPK = getPKFromKeyValue(currentKV);
-
         boolean isNextPK = false;
+        KeyValue kv = null;
+        Object target;
+
         if (!iterator.hasNext()) return new ArrayList<>();
         while (iterator.hasNext() && !isNextPK) {
             currentKV = iterator.next();
@@ -220,8 +213,7 @@ public class Cursor {
         if(operator == null){
             return keyvalueList;
         }
-        KeyValue kv = null;
-        Object target;
+
         for(KeyValue keyValue: keyvalueList){
             Tuple attributeToCompare = Tuple.fromBytes(keyValue.getKey());
             if(attributeToCompare.getString(metadata.getPrimaryKeys().size()+1).equals(attributeKey)) {
@@ -239,14 +231,25 @@ public class Cursor {
             return getNextKV(new ArrayList<>());
         }
 
-        if (comparison(target)) {
+        if (compare(target)) {
             return keyvalueList;
         } else {
             return getNextKV(new ArrayList<>());
         }
     }
 
-    private boolean comparison(Object target) {
+    private List<FDBKVPair> toFDBKVPair(List<KeyValue> keyvalueList) {
+        List<FDBKVPair> result = new ArrayList<>();
+        for (KeyValue keyvalue : keyvalueList) {
+            Tuple key = Tuple.fromBytes(keyvalue.getKey()).popFront();
+            Tuple value = Tuple.fromBytes(keyvalue.getValue());
+            result.add(new FDBKVPair(path, key, value));
+        }
+        if (result.size() == 0) return null;
+        return result;
+    }
+
+    private boolean compare(Object target) {
 
         if (operator == ComparisonOperator.EQUAL_TO) {
             if (target instanceof Integer) {
@@ -270,7 +273,7 @@ public class Cursor {
             }
             if (target instanceof Long) {
                 if (attributeVal instanceof Integer) {
-                    return (Long) target >= (Integer) attributeVal;
+                    return (Long) target > (Integer) attributeVal;
                 } else {
                     return (Long) target > (Long) attributeVal;
                 }
@@ -282,6 +285,26 @@ public class Cursor {
                 return ((String) target).compareTo((String) attributeVal) > 0;
             }
         }
+
+        if (operator == ComparisonOperator.GREATER_THAN_OR_EQUAL_TO) {
+            if (target instanceof Integer) {
+                return (Integer) target >= (Integer) attributeVal;
+            }
+            if (target instanceof Long) {
+                if (attributeVal instanceof Integer) {
+                    return (Long) target >= (Integer) attributeVal;
+                } else {
+                    return (Long) target >= (Long) attributeVal;
+                }
+            }
+            if (target instanceof Double) {
+                return (Double) target >= (Double) attributeVal;
+            }
+            if (target instanceof String) {
+                return ((String) target).compareTo((String) attributeVal) >= 0;
+            }
+        }
+
         if (operator == ComparisonOperator.LESS_THAN) {
             if (target instanceof Integer) {
                 return (Integer) target < (Integer) attributeVal;
@@ -318,37 +341,10 @@ public class Cursor {
                 return ((String) target).compareTo((String) attributeVal) <= 0;
             }
         }
-        if (operator == ComparisonOperator.GREATER_THAN_OR_EQUAL_TO) {
-            if (target instanceof Integer) {
-                return (Integer) target >= (Integer) attributeVal;
-            }
-            if (target instanceof Long) {
-                if (attributeVal instanceof Integer) {
-                    return (Long) target >= (Integer) attributeVal;
-                } else {
-                    return (Long) target >= (Long) attributeVal;
-                }
-            }
-            if (target instanceof Double) {
-                return (Double) target >= (Double) attributeVal;
-            }
-            if (target instanceof String) {
-                return ((String) target).compareTo((String) attributeVal) >= 0;
-            }
-        }
+
         return false;
     }
 
-    private List<FDBKVPair> toFDBKVPair(List<KeyValue> keyvalueList) {
-        List<FDBKVPair> result = new ArrayList<>();
-        for (KeyValue keyvalue : keyvalueList) {
-            Tuple key = Tuple.fromBytes(keyvalue.getKey()).popFront();
-            Tuple value = Tuple.fromBytes(keyvalue.getValue());
-            result.add(new FDBKVPair(path, key, value));
-        }
-        if (result.size() == 0) return null;
-        return result;
-    }
 
     public String getTableName() {
         return tableName;
